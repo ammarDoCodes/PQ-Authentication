@@ -793,6 +793,7 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 	if err := conn.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM admin_sessions WHERE token_hash = $1`, hashToken(memberSession)).Scan(&memberSessionRevoked); err != nil || !memberSessionRevoked {
 		t.Fatalf("removing a tenant member must revoke their admin sessions: revoked=%v err=%v", memberSessionRevoked, err)
 	}
+	adminServer.Auth = integrationTokenVerifier{principal: auth.Principal{Issuer: "https://id.example", Subject: "admin-3"}}
 	response = adminRequest(http.MethodDelete, "/v1/tenants/"+tenantA+"/members/"+addedMember.ID, "")
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "LAST_TENANT_ADMIN") {
 		t.Fatalf("the last tenant administrator must not be removable, got %d %s", response.Code, response.Body.String())

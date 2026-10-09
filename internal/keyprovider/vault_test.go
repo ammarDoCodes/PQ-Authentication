@@ -348,6 +348,27 @@ func TestVaultGenerateActivateSignDisableAndScopeBinding(t *testing.T) {
 	}
 }
 
+func TestVaultErrorPreservesSafeOperationStage(t *testing.T) {
+	server := newVaultTestServer(t)
+	provider := newVaultTestProvider(t, server.server.URL, newVaultTestStore())
+	audit := newRecordingAudit()
+	broker, err := NewBroker(context.Background(), "development", provider, audit)
+	if err != nil {
+		t.Fatal("construct broker:", err)
+	}
+	server.deny = true
+	server.denyStatus = http.StatusNotFound
+	_, err = broker.Generate(WithAuditContext(context.Background(), testAuditContext), vaultScopeA, KeySpec{
+		Purpose: PurposeSigning, Algorithm: AlgorithmEd25519, ExpiresAt: time.Now().UTC().Add(time.Hour),
+	})
+	if !errors.Is(err, ErrKeyNotFound) || !strings.Contains(err.Error(), "Vault Transit key creation") {
+		t.Fatalf("safe operation stage was not preserved through broker sanitization: %v", err)
+	}
+	if strings.Contains(err.Error(), "credential-canary") {
+		t.Fatal("provider response detail leaked through operation context")
+	}
+}
+
 func TestVaultRejectsUnauthorizedMalformedAndUnsupportedRequests(t *testing.T) {
 	t.Run("unauthorized", func(t *testing.T) {
 		server := newVaultTestServer(t)

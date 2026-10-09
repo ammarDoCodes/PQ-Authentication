@@ -153,6 +153,20 @@ type AuditSink interface {
 	RecordKeyOperation(context.Context, AuditEvent) error
 }
 
+// safeProviderOperationError adds only a fixed operation label to a sanitized
+// provider error, preserving useful failure stage without retaining backend
+// response text that could contain credentials or sensitive paths.
+type safeProviderOperationError struct {
+	operation string
+	cause     error
+}
+
+func (e *safeProviderOperationError) Error() string {
+	return e.operation + ": " + e.cause.Error()
+}
+
+func (e *safeProviderOperationError) Unwrap() error { return e.cause }
+
 // Provider methods address keys by opaque reference and trusted tenant,
 // application, and environment scope. Implementations must never return
 // private material. Transition must atomically compare expectedState and
@@ -910,6 +924,10 @@ func sanitizeProviderError(err error) error {
 	switch {
 	case err == nil:
 		return nil
+	case hasSafeProviderOperationError(err):
+		var operationErr *safeProviderOperationError
+		_ = errors.As(err, &operationErr)
+		return &safeProviderOperationError{operation: operationErr.operation, cause: sanitizeProviderError(operationErr.cause)}
 	case errors.Is(err, context.DeadlineExceeded):
 		return ErrProviderTimeout
 	case errors.Is(err, ErrProviderTimeout):
@@ -937,6 +955,11 @@ func sanitizeProviderError(err error) error {
 	default:
 		return ErrProviderUnavailable
 	}
+}
+
+func hasSafeProviderOperationError(err error) bool {
+	var operationErr *safeProviderOperationError
+	return errors.As(err, &operationErr)
 }
 
 func cloneCapabilities(value Capabilities) Capabilities {

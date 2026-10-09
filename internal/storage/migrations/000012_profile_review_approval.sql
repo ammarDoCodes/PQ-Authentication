@@ -13,7 +13,11 @@ ALTER TABLE algorithm_profiles
 
 -- Existing approved rows predate independent reviewer evidence. Fail closed by
 -- disabling them rather than treating their timestamp as an approval record.
+-- The migration owner temporarily bypasses forced RLS within this transaction;
+-- the table remains locked until the original forced policy is restored.
+ALTER TABLE algorithm_profiles NO FORCE ROW LEVEL SECURITY;
 UPDATE algorithm_profiles SET lifecycle = 'disabled', reviewed_at = NULL WHERE lifecycle = 'approved';
+ALTER TABLE algorithm_profiles FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE algorithm_profiles
     ADD CONSTRAINT algorithm_profiles_lifecycle_check

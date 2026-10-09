@@ -11,7 +11,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -184,15 +183,15 @@ func (p *VaultProvider) Generate(ctx context.Context, scope Scope, spec KeySpec)
 		"allow_plaintext_backup": false,
 	}
 	if err := p.requestJSON(ctx, http.MethodPost, p.keyEndpoint(name), create, nil); err != nil {
-		return Metadata{}, fmt.Errorf("vault Transit key creation failed: %w", sanitizeProviderError(err))
+		return Metadata{}, &safeProviderOperationError{operation: "Vault Transit key creation", cause: sanitizeProviderError(err)}
 	}
 	// Transit-created keys start signable. Immediately raise the minimum
 	// signing version so an unpublished provisioning key is unusable.
 	if err := p.setSigningFloor(ctx, name, 2); err != nil {
-		return Metadata{}, fmt.Errorf("vault Transit provisioning key restriction failed: %w", sanitizeProviderError(err))
+		return Metadata{}, &safeProviderOperationError{operation: "Vault Transit provisioning key restriction", cause: sanitizeProviderError(err)}
 	}
 	if _, err := p.readVaultKey(ctx, name); err != nil {
-		return Metadata{}, fmt.Errorf("vault Transit public key read failed: %w", sanitizeProviderError(err))
+		return Metadata{}, &safeProviderOperationError{operation: "Vault Transit public key read", cause: sanitizeProviderError(err)}
 	}
 	item := Metadata{
 		Provider: VaultTransit, Reference: reference, Purpose: spec.Purpose, Algorithm: spec.Algorithm,

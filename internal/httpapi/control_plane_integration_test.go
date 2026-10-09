@@ -1045,6 +1045,7 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 	if err := withIntegrationTenant(ctx, conn, tenantA, func(tx pgx.Tx) error {
 		for _, member := range []struct{ subject, role string }{
 			{"profile-author", "security_engineer"}, {"profile-reviewer", "security_engineer"},
+			{"profile-tenant-admin", "tenant_admin"},
 		} {
 			if _, err := tx.Exec(ctx, `INSERT INTO tenant_members(tenant_id, issuer, subject, role) VALUES ($1, 'https://id.example', $2, $3)`, tenantA, member.subject, member.role); err != nil {
 				return err
@@ -1242,7 +1243,7 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 	}
 	profilePath := "/v1/tenants/" + tenantA + "/algorithm-profiles/tls13-classical/reviews"
 	validEvidence := profileEvidence(false)
-	response = profileRequestAs("admin-3", tenantA, http.MethodPost, profilePath, validEvidence, "", nextKey())
+	response = profileRequestAs("profile-tenant-admin", tenantA, http.MethodPost, profilePath, validEvidence, "", nextKey())
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("tenant administrator must not author a profile review: %d %s", response.Code, response.Body.String())
 	}
@@ -1402,7 +1403,7 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 		reviewDetail.DesignRecord.DowngradeDetection != "SENSITIVE-REVIEW-DETAIL-DO-NOT-AUDIT" {
 		t.Fatalf("authorized reviewer should be able to verify immutable approval evidence: %d %s", response.Code, response.Body.String())
 	}
-	response = profileRequestAs("admin-3", tenantA, http.MethodGet, reviewActionPath, "", "", "")
+	response = profileRequestAs("profile-tenant-admin", tenantA, http.MethodGet, reviewActionPath, "", "", "")
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("profile evidence reads should be restricted to security engineers and auditors: %d %s", response.Code, response.Body.String())
 	}

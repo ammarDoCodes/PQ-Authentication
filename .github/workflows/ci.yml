@@ -1,0 +1,211 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Unit, static, and build checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Check formatting
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            printf '%s\n' "$files"
+            exit 1
+          fi
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Test without infrastructure credentials
+        run: go test -count=1 ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Static analysis
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+      - name: Scan repository history for secrets
+        run: go run github.com/zricethezav/gitleaks/v8@v8.27.2 git . --redact --exit-code 1
+
+      - name: Scan working tree for secrets
+        run: go run github.com/zricethezav/gitleaks/v8@v8.27.2 dir . --redact --exit-code 1
+
+      - name: Build
+        run: go build ./...
+
+      - name: Build production container
+        run: docker build --pull --tag quantumgate:ci .
+
+  postgres-race:
+    name: PostgreSQL integration and race tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17.11-bookworm
+        env:
+          POSTGRES_DB: quantumgate_test
+          POSTGRES_USER: quantumgate_admin
+          POSTGRES_PASSWORD: qg-admin-${{ github.run_id }}-${{ github.run_attempt }}
+          POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U quantumgate_admin -d quantumgate_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      PG_ADMIN_PASSWORD: qg-admin-${{ github.run_id }}-${{ github.run_attempt }}
+      PG_TEST_PASSWORD: qg-test-${{ github.run_id }}-${{ github.run_attempt }}
+      PG_RUNTIME_PASSWORD: qg-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+      TEST_DATABASE_URL: "postgres://qg_test:qg-test-${{ github.run_id }}-${{ github.run_attempt }}@127.0.0.1:5432/quantumgate_test?sslmode=disable"
+      TEST_RUNTIME_DATABASE_URL: "postgres://quantumgate:qg-runtime-${{ github.run_id }}-${{ github.run_attempt }}@127.0.0.1:5432/quantumgate_test?sslmode=disable"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Create isolated least-privilege test roles
+        run: |
+          container="$(docker ps --filter 'ancestor=postgres:17.11-bookworm' --format '{{.ID}}' | head -n 1)"
+          test -n "$container"
+          docker exec -i -e PGPASSWORD="$PG_ADMIN_PASSWORD" "$container" \
+            psql -h 127.0.0.1 -U quantumgate_admin -d postgres -v ON_ERROR_STOP=1 \
+            -v qg_test_password="$PG_TEST_PASSWORD" \
+            -v qg_runtime_password="$PG_RUNTIME_PASSWORD" <<'SQL'
+          CREATE ROLE qg_test LOGIN NOSUPERUSER CREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD :'qg_test_password';
+          CREATE ROLE quantumgate LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD :'qg_runtime_password';
+          GRANT CONNECT ON DATABASE quantumgate_test TO qg_test, quantumgate;
+          SQL
+
+      - name: Run all tests with PostgreSQL and the race detector
+        run: go test -race -count=1 ./...
+
+  vault-transit:
+    name: Real Vault Transit API integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      vault:
+        image: hashicorp/vault:1.21.4
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: qg-vault-root-${{ github.run_id }}-${{ github.run_attempt }}
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Initialize Transit and issue narrowly scoped tokens
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: qg-vault-root-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          container="$(docker ps --filter 'ancestor=hashicorp/vault:1.21.4' --format '{{.ID}}' | head -n 1)"
+          test -n "$container"
+          ready=false
+          for attempt in $(seq 1 30); do
+            if docker exec -e VAULT_ADDR=http://127.0.0.1:8200 \
+              -e VAULT_TOKEN="$VAULT_DEV_ROOT_TOKEN_ID" "$container" vault status >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+          docker exec -e VAULT_ADDR=http://127.0.0.1:8200 \
+            -e VAULT_TOKEN="$VAULT_DEV_ROOT_TOKEN_ID" "$container" \
+            vault secrets enable -path=transit transit >/dev/null
+          cat <<'POLICY' | docker exec -i -e VAULT_ADDR=http://127.0.0.1:8200 \
+            -e VAULT_TOKEN="$VAULT_DEV_ROOT_TOKEN_ID" "$container" \
+            vault policy write qg-transit-integration - >/dev/null
+          path "sys/health" {
+            capabilities = ["read"]
+          }
+          path "transit/config/keys" {
+            capabilities = ["read"]
+          }
+          path "transit/keys/quantumgate/test/+/+/signing/+" {
+            # Vault maps the POST key-creation API operation to `update`.
+            capabilities = ["create", "read", "update"]
+          }
+          path "transit/keys/quantumgate/test/+/+/signing/+/config" {
+            capabilities = ["update"]
+          }
+          path "transit/sign/quantumgate/test/+/+/signing/+" {
+            capabilities = ["update"]
+          }
+          POLICY
+          cat <<'POLICY' | docker exec -i -e VAULT_ADDR=http://127.0.0.1:8200 \
+            -e VAULT_TOKEN="$VAULT_DEV_ROOT_TOKEN_ID" "$container" \
+            vault policy write qg-transit-health-only - >/dev/null
+          path "sys/health" {
+            capabilities = ["read"]
+          }
+          POLICY
+          umask 077
+          runtime_token="$(docker exec -e VAULT_ADDR=http://127.0.0.1:8200 \
+            -e VAULT_TOKEN="$VAULT_DEV_ROOT_TOKEN_ID" "$container" \
+            vault token create -no-default-policy -ttl=15m -policy=qg-transit-integration -format=json \
+            | jq -er '.auth.client_token')"
+          denied_token="$(docker exec -e VAULT_ADDR=http://127.0.0.1:8200 \
+            -e VAULT_TOKEN="$VAULT_DEV_ROOT_TOKEN_ID" "$container" \
+            vault token create -no-default-policy -ttl=15m -policy=qg-transit-health-only -format=json \
+            | jq -er '.auth.client_token')"
+          printf '%s\n' "$runtime_token" > "$RUNNER_TEMP/qg-vault-runtime-token"
+          printf '%s\n' "$denied_token" > "$RUNNER_TEMP/qg-vault-denied-token"
+          chmod 600 "$RUNNER_TEMP/qg-vault-runtime-token" "$RUNNER_TEMP/qg-vault-denied-token"
+          unset runtime_token denied_token
+
+      - name: Exercise real Vault Transit operations
+        env:
+          QG_REAL_VAULT_ADDR: http://127.0.0.1:8200
+          QG_REAL_VAULT_TOKEN_FILE: ${{ runner.temp }}/qg-vault-runtime-token
+          QG_REAL_VAULT_DENIED_TOKEN_FILE: ${{ runner.temp }}/qg-vault-denied-token
+        run: go test -count=1 -run '^TestVaultRealTransitIntegration$' ./internal/keyprovider

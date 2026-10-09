@@ -1,0 +1,28 @@
+name: quantumgate-local
+
+services:
+  db:
+    image: postgres:17.11-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-quantumgate}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-quantumgate_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env}
+      QG_POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-quantumgate_admin}
+      QG_CREATE_LOCAL_ADMIN: "true"
+      QG_APP_PASSWORD: ${QG_APP_PASSWORD:?Set QG_APP_PASSWORD in .env}
+      QG_MIGRATION_PASSWORD: ${QG_MIGRATION_PASSWORD:?Set QG_MIGRATION_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - quantumgate-db:/var/lib/postgresql/data
+      - ./ops/postgres/init/01-app-role.sh:/docker-entrypoint-initdb.d/01-app-role.sh:ro
+      - ./ops/postgres/roles.sql:/roles.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  quantumgate-db:

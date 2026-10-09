@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>QuantumGate Admin</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <script src="/dashboard.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="QuantumGate home">QuantumGate</a>
+    <div id="account" class="account" hidden>
+      <span id="session-label"></span>
+      <button id="logout" class="button button-quiet" type="button">Sign out</button>
+    </div>
+  </header>
+  <main>
+    <section class="intro">
+      <p class="eyebrow">Security posture control plane</p>
+      <h1>Manage registered applications</h1>
+      <p>Keep your existing identity and business authorization. Manage policy revisions and simulate sample contexts before connecting a data-plane integration.</p>
+    </section>
+
+    <section id="sign-in" class="panel sign-in">
+      <h2>Administrator sign-in</h2>
+      <p>Use your organization’s configured identity provider. Administrator access requires the configured strong authentication context.</p>
+      <a class="button" href="/auth/login">Sign in</a>
+    </section>
+
+    <section id="workspace" hidden>
+      <div class="panel tenant-panel">
+        <div>
+          <p class="eyebrow">Tenant workspace</p>
+          <h2 id="tenant-heading">Choose a tenant</h2>
+        </div>
+        <form id="tenant-form" class="tenant-form">
+          <label for="tenant-id">Tenant ID</label>
+          <div class="field-row">
+            <input id="tenant-id" name="tenant_id" autocomplete="off" spellcheck="false" required placeholder="UUID from your administrator">
+            <button class="button" type="submit">Open</button>
+          </div>
+        </form>
+      </div>
+      <p id="notice" class="notice" role="status" aria-live="polite"></p>
+
+      <div id="tenant-data" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Registered services</p>
+            <h2>Applications</h2>
+          </div>
+          <span id="tenant-name" class="tenant-name"></span>
+        </div>
+        <div class="columns">
+          <section class="panel">
+            <h3>Applications</h3>
+            <div id="applications" class="stack"></div>
+          </section>
+          <section class="panel">
+            <h3>Recent audit events</h3>
+            <div id="audit-events" class="stack"></div>
+          </section>
+        </div>
+
+        <section id="posture-workspace" class="panel policy-panel" hidden>
+          <div class="section-heading policy-heading">
+            <div>
+              <p class="eyebrow">Inventory snapshot</p>
+              <h2>Application posture</h2>
+            </div>
+            <span id="posture-application-name" class="tenant-name"></span>
+          </div>
+          <p class="form-hint">This view summarizes stored inventory and observations. It does not show that traffic enforcement is active.</p>
+          <div id="posture-summary" class="stack"></div>
+          <h3>Recent observations</h3>
+          <div id="posture-observations" class="stack"></div>
+        </section>
+
+        <section id="policy-workspace" class="panel policy-panel" hidden>
+          <div class="section-heading policy-heading">
+            <div>
+              <p class="eyebrow">Versioned policy</p>
+              <h2>Policy revisions</h2>
+            </div>
+            <span id="policy-application-name" class="tenant-name"></span>
+          </div>
+          <div id="policy-list" class="stack"></div>
+          <form id="policy-form" class="policy-form">
+            <h3>Create a policy draft</h3>
+            <div class="policy-fields">
+              <div>
+                <label for="policy-mode">Protection mode</label>
+                <select id="policy-mode" name="mode">
+                  <option value="classical-approved">Classical approved</option>
+                  <option value="hybrid-approved">Hybrid approved</option>
+                  <option value="observe-only">Observe only</option>
+                </select>
+              </div>
+              <div>
+                <label for="policy-profile">Approved profile</label>
+                <select id="policy-profile" name="profile" required></select>
+              </div>
+              <div>
+                <label for="policy-fallback">Fallback</label>
+                <select id="policy-fallback" name="fallback">
+                  <option value="deny">Deny</option>
+                  <option value="observe">Observe</option>
+                  <option value="degraded_allowed">Degraded allowed</option>
+                </select>
+              </div>
+              <div>
+                <label for="policy-stale">Stale behavior</label>
+                <select id="policy-stale" name="stale_behavior">
+                  <option value="deny">Deny</option>
+                  <option value="observe">Observe</option>
+                  <option value="degraded_allowed">Degraded allowed</option>
+                </select>
+              </div>
+              <div>
+                <label for="policy-method">Route method</label>
+                <select id="policy-method" name="method">
+                  <option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option>
+                </select>
+              </div>
+              <div>
+                <label for="policy-path">Route path prefix</label>
+                <input id="policy-path" name="path_prefix" value="/api/" maxlength="1024" required>
+              </div>
+              <div class="policy-acr-field">
+                <label for="policy-acr">Required authentication context (optional)</label>
+                <input id="policy-acr" name="required_acr" maxlength="512" placeholder="urn:example:admin-mfa">
+              </div>
+            </div>
+            <p class="form-hint">This draft applies only to the selected route and profile. Policy simulation is informational; this release does not enforce end-user traffic.</p>
+            <button class="button" type="submit">Create draft</button>
+          </form>
+          <div class="schedule-control">
+            <label for="policy-schedule-time">Schedule activation time</label>
+            <input id="policy-schedule-time" type="datetime-local">
+            <span class="form-hint">Choose a time at least 30 seconds ahead. The service applies due schedules in the background.</span>
+          </div>
+        </section>
+
+        <div class="columns management">
+          <section class="panel">
+            <h3>Add an environment</h3>
+            <form id="environment-form" class="form-stack">
+              <label for="environment-name">Name</label>
+              <input id="environment-name" name="name" maxlength="80" required>
+              <label for="environment-lifecycle">Lifecycle</label>
+              <select id="environment-lifecycle" name="lifecycle">
+                <option value="development">Development</option>
+                <option value="staging">Staging</option>
+                <option value="production">Production</option>
+              </select>
+              <button class="button" type="submit">Create environment</button>
+            </form>
+          </section>
+          <section class="panel">
+            <h3>Register an application</h3>
+            <form id="application-form" class="form-stack">
+              <label for="environment-id">Environment ID</label>
+              <input id="environment-id" name="environment_id" required placeholder="UUID">
+              <label for="external-id">Existing application ID</label>
+              <input id="external-id" name="external_id" maxlength="128" required>
+              <label for="display-name">Display name</label>
+              <input id="display-name" name="display_name" maxlength="120" required>
+              <label for="integration-mode">Integration mode</label>
+              <select id="integration-mode" name="integration_mode">
+                <option value="sdk">SDK</option>
+                <option value="gateway">Gateway</option>
+                <option value="control-plane">Control plane</option>
+              </select>
+              <button class="button" type="submit">Register application</button>
+            </form>
+          </section>
+        </div>
+        <p class="footnote">Policy lifecycle and simulation are available for the registered TLS profiles. Traffic enforcement, integration telemetry, and key-provider status require the unfinished data plane.</p>
+      </div>
+    </section>
+  </main>
+  <footer><span>QuantumGate · Local control plane</span><span id="request-id"></span></footer>
+</body>
+</html>

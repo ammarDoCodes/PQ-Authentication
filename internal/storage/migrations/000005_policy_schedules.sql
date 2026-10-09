@@ -35,6 +35,11 @@ CREATE TRIGGER policy_revisions_immutable_content
     FOR EACH ROW EXECUTE FUNCTION qg_guard_policy_revision();
 REVOKE ALL ON FUNCTION qg_guard_policy_revision() FROM PUBLIC;
 
+-- The schedule queue identifies a revision by tenant and revision ID. The
+-- primary key on id alone does not let PostgreSQL enforce that tenant pair.
+ALTER TABLE policy_revisions
+    ADD CONSTRAINT policy_revisions_tenant_id_unique UNIQUE (tenant_id, id);
+
 CREATE TABLE policy_schedule_queue (
     tenant_id UUID NOT NULL,
     policy_id UUID NOT NULL,

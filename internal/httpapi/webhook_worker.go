@@ -115,8 +115,7 @@ func processWebhookDelivery(ctx context.Context, db *sql.DB, signer *keyprovider
 	if item.CycleAttempt > webhook.MaxAttempts {
 		return completeWebhookDelivery(ctx, db, item, webhook.SendResult{ErrorCode: "ATTEMPTS_EXHAUSTED"}, "dead", 0)
 	}
-	var eventType webhook.EventType
-	eventType = webhook.EventType(item.EventType)
+	eventType := webhook.EventType(item.EventType)
 	job := webhook.DeliveryJob{
 		Event: webhook.Event{ID: item.EventID, Type: eventType, TenantID: item.TenantID,
 			ApplicationID: item.ApplicationID, OccurredAt: item.OccurredAt.UTC(), CorrelationID: item.CorrelationID,

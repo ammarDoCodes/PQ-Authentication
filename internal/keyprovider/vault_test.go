@@ -333,8 +333,17 @@ func TestVaultGenerateActivateSignDisableAndScopeBinding(t *testing.T) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	for _, request := range server.seen {
-		if strings.Contains(request, "../") || !strings.Contains(request, "/development/"+vaultScopeA.TenantID+"/"+vaultScopeA.ApplicationID+"/signing/") {
+		methodAndName := strings.SplitN(request, " ", 2)
+		if len(methodAndName) != 2 || strings.Contains(request, "../") {
 			t.Fatalf("Vault request path is not server-scoped: %q", request)
+		}
+		name := strings.TrimSuffix(strings.TrimSuffix(methodAndName[1], "/config"), "/sign")
+		if !strings.HasPrefix(name, "quantumgate/") || strings.Contains(strings.TrimPrefix(name, "quantumgate/"), "/") {
+			t.Fatalf("Vault key name is not one scoped path segment: %q", request)
+		}
+		encodedScope, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(name, "quantumgate/"))
+		if err != nil || string(encodedScope) != strings.Join([]string{vaultScopeA.Environment, vaultScopeA.TenantID, vaultScopeA.ApplicationID, item.Reference}, "\x00") {
+			t.Fatalf("Vault key name did not preserve its trusted scope: %q", request)
 		}
 	}
 }

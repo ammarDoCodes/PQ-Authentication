@@ -205,7 +205,7 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 		}
 	} else if cfg.VaultAddress != "" || cfg.VaultNamespace != "" || cfg.VaultTransitMount != "" ||
 		cfg.VaultKeyPrefix != "" || cfg.VaultTokenFile != "" || cfg.VaultCACertFile != "" {
-		return Config{}, errors.New("Vault settings require KEY_PROVIDER=vault-transit")
+		return Config{}, errors.New("vault settings require KEY_PROVIDER=vault-transit")
 	}
 	if cfg.KeyProviderRequired && cfg.KeyProvider == "" {
 		return Config{}, errors.New("KEY_PROVIDER is required when key-provider protection is required")
@@ -482,7 +482,7 @@ func validateVaultAddress(raw, environment string) error {
 		return nil
 	}
 	if u.Scheme != "http" || environment == "production" {
-		return errors.New("Vault requires HTTPS")
+		return errors.New("vault requires HTTPS")
 	}
 	host := strings.ToLower(u.Hostname())
 	ip := net.ParseIP(host)

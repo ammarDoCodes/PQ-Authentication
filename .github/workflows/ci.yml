@@ -171,14 +171,14 @@ jobs:
           path "transit/config/keys" {
             capabilities = ["read"]
           }
-          path "transit/keys/quantumgate/test/+/+/signing/+" {
+          path "transit/keys/quantumgate/+" {
             # Vault maps the POST key-creation API operation to `update`.
             capabilities = ["create", "read", "update"]
           }
-          path "transit/keys/quantumgate/test/+/+/signing/+/config" {
+          path "transit/keys/quantumgate/+/config" {
             capabilities = ["update"]
           }
-          path "transit/sign/quantumgate/test/+/+/signing/+" {
+          path "transit/sign/quantumgate/+" {
             capabilities = ["update"]
           }
           POLICY

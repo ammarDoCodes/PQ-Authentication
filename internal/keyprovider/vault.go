@@ -448,12 +448,13 @@ func (p *VaultProvider) keyName(scope Scope, reference string) (string, error) {
 	if !p.validScope(scope) || !validVaultReference(reference) {
 		return "", ErrKeyNotFound
 	}
-	// Transit key names are a single path segment. Encode the complete trusted
-	// scope and reference together so Vault's path router and ACL wildcards can
-	// address the key without dropping tenant or application isolation.
-	scopedName := strings.Join([]string{scope.Environment, strings.ToLower(scope.TenantID),
+	// Transit key names are a single path segment. Keep the configured prefix
+	// and environment visible for Vault ACL scoping; encode tenant, application,
+	// and reference together so their trusted boundaries remain injective.
+	prefix := "qg_" + base64.RawURLEncoding.EncodeToString([]byte(p.keyPrefix)) + "_" + scope.Environment + "_"
+	scopedName := strings.Join([]string{strings.ToLower(scope.TenantID),
 		strings.ToLower(scope.ApplicationID), reference}, "\x00")
-	return path.Join(p.keyPrefix, base64.RawURLEncoding.EncodeToString([]byte(scopedName))), nil
+	return prefix + base64.RawURLEncoding.EncodeToString([]byte(scopedName)), nil
 }
 
 func (p *VaultProvider) keyEndpoint(name string) string {

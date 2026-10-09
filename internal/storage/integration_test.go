@@ -622,8 +622,10 @@ func TestProfileReviewMigrationDisablesLegacyApprovals(t *testing.T) {
 	}
 	var lifecycle string
 	var reviewedAtIsNull bool
-	if err := conn.QueryRow(ctx, `SELECT lifecycle, reviewed_at IS NULL FROM algorithm_profiles
-		WHERE tenant_id = $1 AND profile_id = 'tls13-classical'`, tenantID).Scan(&lifecycle, &reviewedAtIsNull); err != nil {
+	if err := withTenant(ctx, conn, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT lifecycle, reviewed_at IS NULL FROM algorithm_profiles
+			WHERE tenant_id = $1 AND profile_id = 'tls13-classical'`, tenantID).Scan(&lifecycle, &reviewedAtIsNull)
+	}); err != nil {
 		t.Fatal("read upgraded legacy approval: ", err)
 	}
 	if lifecycle != "disabled" || !reviewedAtIsNull {

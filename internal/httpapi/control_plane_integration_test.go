@@ -1242,7 +1242,7 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 	}
 	profilePath := "/v1/tenants/" + tenantA + "/algorithm-profiles/tls13-classical/reviews"
 	validEvidence := profileEvidence(false)
-	response = profileRequestAs("admin-2", tenantA, http.MethodPost, profilePath, validEvidence, "", nextKey())
+	response = profileRequestAs("admin-3", tenantA, http.MethodPost, profilePath, validEvidence, "", nextKey())
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("tenant administrator must not author a profile review: %d %s", response.Code, response.Body.String())
 	}
@@ -1313,7 +1313,7 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("another tenant must not access the review record: %d %s", response.Code, response.Body.String())
 	}
-	response = profileRequestAs("admin-2", tenantA, http.MethodPost, reviewActionPath+"/approve", approvalBody, profileReviewETag, nextKey())
+	response = profileRequestAs("admin-3", tenantA, http.MethodPost, reviewActionPath+"/approve", approvalBody, profileReviewETag, nextKey())
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("tenant administrator without security-engineer role must not approve a profile: %d %s", response.Code, response.Body.String())
 	}
@@ -1402,7 +1402,7 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 		reviewDetail.DesignRecord.DowngradeDetection != "SENSITIVE-REVIEW-DETAIL-DO-NOT-AUDIT" {
 		t.Fatalf("authorized reviewer should be able to verify immutable approval evidence: %d %s", response.Code, response.Body.String())
 	}
-	response = profileRequestAs("admin-2", tenantA, http.MethodGet, reviewActionPath, "", "", "")
+	response = profileRequestAs("admin-3", tenantA, http.MethodGet, reviewActionPath, "", "", "")
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("profile evidence reads should be restricted to security engineers and auditors: %d %s", response.Code, response.Body.String())
 	}

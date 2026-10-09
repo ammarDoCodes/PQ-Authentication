@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 //go:embed migrations/*.sql
@@ -122,6 +123,10 @@ func ApplyMigrations(ctx context.Context, conn *pgx.Conn) error {
 		}
 		if err != nil {
 			_ = tx.Rollback(ctx)
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) {
+				return fmt.Errorf("migration %d failed (SQLSTATE %s)", m.Version, pgErr.Code)
+			}
 			return fmt.Errorf("migration %d failed", m.Version)
 		}
 		if err := tx.Commit(ctx); err != nil {

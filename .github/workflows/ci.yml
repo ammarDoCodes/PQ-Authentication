@@ -48,8 +48,22 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # Staticcheck 0.8.1's x/tools dependency cannot decode Go 1.27.2 export
+      # data yet. Run this analyzer on the same Go 1.27 language baseline.
+      - name: Set up Go for Staticcheck
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache: false
+
       - name: Static analysis
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+
+      - name: Restore patched Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
 
       - name: Vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
@@ -125,7 +139,7 @@ jobs:
     timeout-minutes: 25
     services:
       vault:
-        image: hashicorp/vault:1.21.4
+        image: public.ecr.aws/hashicorp/vault:1.21.4
         env:
           VAULT_DEV_ROOT_TOKEN_ID: qg-vault-root-${{ github.run_id }}-${{ github.run_attempt }}
           VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
@@ -147,7 +161,7 @@ jobs:
         env:
           VAULT_DEV_ROOT_TOKEN_ID: qg-vault-root-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          container="$(docker ps --filter 'ancestor=hashicorp/vault:1.21.4' --format '{{.ID}}' | head -n 1)"
+          container="$(docker ps --filter 'ancestor=public.ecr.aws/hashicorp/vault:1.21.4' --format '{{.ID}}' | head -n 1)"
           test -n "$container"
           ready=false
           for attempt in $(seq 1 30); do

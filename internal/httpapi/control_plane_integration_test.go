@@ -259,7 +259,8 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 		t.Fatal("audit export payload must be versioned ciphertext without plaintext events")
 	}
 	if err := withIntegrationTenant(ctx, conn, tenantB, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `UPDATE export_jobs SET expires_at = now() - interval '1 second' WHERE tenant_id = $1 AND id = $2`, tenantB, createdExport.ID)
+		_, err := tx.Exec(ctx, `UPDATE export_jobs SET requested_at = now() - interval '2 seconds',
+			expires_at = now() - interval '1 second' WHERE tenant_id = $1 AND id = $2`, tenantB, createdExport.ID)
 		return err
 	}); err != nil {
 		t.Fatal("expire test export: ", err)

@@ -72,7 +72,7 @@ jobs:
     timeout-minutes: 40
     services:
       postgres:
-        image: postgres:17.11-bookworm
+        image: public.ecr.aws/docker/library/postgres:17.11-bookworm
         env:
           POSTGRES_DB: quantumgate_test
           POSTGRES_USER: quantumgate_admin
@@ -105,7 +105,7 @@ jobs:
 
       - name: Create isolated least-privilege test roles
         run: |
-          container="$(docker ps --filter 'ancestor=postgres:17.11-bookworm' --format '{{.ID}}' | head -n 1)"
+          container="$(docker ps --filter 'ancestor=public.ecr.aws/docker/library/postgres:17.11-bookworm' --format '{{.ID}}' | head -n 1)"
           test -n "$container"
           docker exec -i -e PGPASSWORD="$PG_ADMIN_PASSWORD" "$container" \
             psql -h 127.0.0.1 -U quantumgate_admin -d postgres -v ON_ERROR_STOP=1 \

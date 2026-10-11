@@ -531,7 +531,7 @@ func TestProfileReviewMigrationDisablesLegacyApprovals(t *testing.T) {
 	if err != nil {
 		t.Fatal("connect to test PostgreSQL: ", err)
 	}
-	defer base.Close(context.Background())
+	t.Cleanup(func() { _ = base.Close(context.Background()) })
 
 	random := make([]byte, 8)
 	if _, err := rand.Read(random); err != nil {

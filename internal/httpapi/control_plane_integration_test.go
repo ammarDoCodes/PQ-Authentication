@@ -1368,12 +1368,15 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 		deniedDecision.Method != "POST" || deniedDecision.Path != "/api/items" {
 		t.Fatalf("policy denial should be returned as an explicit server decision: %d %s", deniedSDK.Code, deniedSDK.Body.String())
 	}
-	var sdkDecisionActor, sdkDecisionSource string
+	var sdkDecisionActor, sdkDecisionIntegration, sdkDecisionPolicyRevision, sdkDecisionProfileHash, sdkDecisionSource string
 	if err := withIntegrationTenant(ctx, conn, tenantA, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT actor, source_context::text FROM audit_events WHERE tenant_id = $1 AND correlation_id = $2
-			AND action = 'authorization.decision'`, tenantA, allowedDecision.RequestID).Scan(&sdkDecisionActor, &sdkDecisionSource)
-	}); err != nil || !strings.Contains(sdkDecisionSource, `"integration":"sdk"`) ||
-		!strings.Contains(sdkDecisionSource, allowedDecision.PolicyRevisionID) || !strings.Contains(sdkDecisionSource, allowedDecision.ProfileHash) ||
+		return tx.QueryRow(ctx, `SELECT actor, source_context->>'integration', source_context->>'policy_revision_id',
+			source_context->>'profile_hash', source_context::text FROM audit_events
+			WHERE tenant_id = $1 AND correlation_id = $2 AND action = 'authorization.decision'`,
+			tenantA, allowedDecision.RequestID).Scan(&sdkDecisionActor, &sdkDecisionIntegration,
+			&sdkDecisionPolicyRevision, &sdkDecisionProfileHash, &sdkDecisionSource)
+	}); err != nil || sdkDecisionIntegration != "sdk" || sdkDecisionPolicyRevision != allowedDecision.PolicyRevisionID ||
+		sdkDecisionProfileHash != allowedDecision.ProfileHash ||
 		strings.Contains(sdkDecisionSource, gatewayRequest.IdentityToken) || strings.Contains(sdkDecisionActor, "gateway-user-secret") {
 		t.Fatalf("SDK decision audit must correlate the profile and policy without identity secrets: actor=%q source=%q err=%v", sdkDecisionActor, sdkDecisionSource, err)
 	}

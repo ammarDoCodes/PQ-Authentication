@@ -192,6 +192,9 @@ jobs:
           path "transit/keys/qg_cXVhbnR1bWdhdGU_test_*/config" {
             capabilities = ["update"]
           }
+          path "transit/keys/qg_cXVhbnR1bWdhdGU_test_*/rotate" {
+            capabilities = ["update"]
+          }
           path "transit/sign/qg_cXVhbnR1bWdhdGU_test_*" {
             capabilities = ["update"]
           }

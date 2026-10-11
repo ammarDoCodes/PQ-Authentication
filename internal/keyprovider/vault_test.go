@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -22,8 +23,9 @@ import (
 )
 
 type vaultTestKey struct {
-	private ed25519.PrivateKey
-	public  ed25519.PublicKey
+	private map[int]ed25519.PrivateKey
+	public  map[int]ed25519.PublicKey
+	latest  int
 	floor   int
 }
 
@@ -66,6 +68,27 @@ func newVaultTestServer(t *testing.T) *vaultTestServer {
 		path := strings.TrimPrefix(r.URL.Path, "/v1/transit/keys/")
 		value.mu.Lock()
 		value.seen = append(value.seen, r.Method+" "+path)
+		if strings.HasSuffix(path, "/rotate") && r.Method == http.MethodPost {
+			keyName := strings.TrimSuffix(path, "/rotate")
+			key := value.keys[keyName]
+			if key == nil {
+				value.mu.Unlock()
+				http.NotFound(w, r)
+				return
+			}
+			public, private, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				value.mu.Unlock()
+				http.Error(w, "rotation failed", http.StatusInternalServerError)
+				return
+			}
+			key.latest++
+			key.private[key.latest] = private
+			key.public[key.latest] = public
+			value.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if strings.HasSuffix(path, "/config") && r.Method == http.MethodPost {
 			keyName := strings.TrimSuffix(path, "/config")
 			key := value.keys[keyName]
@@ -77,7 +100,7 @@ func newVaultTestServer(t *testing.T) *vaultTestServer {
 			var payload struct {
 				MinEncryptionVersion int `json:"min_encryption_version"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.MinEncryptionVersion < 0 {
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.MinEncryptionVersion < 0 || payload.MinEncryptionVersion > key.latest {
 				value.mu.Unlock()
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
@@ -90,7 +113,7 @@ func newVaultTestServer(t *testing.T) *vaultTestServer {
 		if strings.HasSuffix(path, "/sign") && r.Method == http.MethodPost {
 			keyName := strings.TrimSuffix(path, "/sign")
 			key := value.keys[keyName]
-			if key == nil || key.floor > 1 {
+			if key == nil {
 				value.mu.Unlock()
 				http.Error(w, "key disabled", http.StatusBadRequest)
 				return
@@ -99,9 +122,15 @@ func newVaultTestServer(t *testing.T) *vaultTestServer {
 				Input      string `json:"input"`
 				KeyVersion int    `json:"key_version"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.KeyVersion != 1 {
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.KeyVersion < key.floor || payload.KeyVersion > key.latest {
 				value.mu.Unlock()
 				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			private, exists := key.private[payload.KeyVersion]
+			if !exists {
+				value.mu.Unlock()
+				http.Error(w, "unknown key version", http.StatusBadRequest)
 				return
 			}
 			input, err := base64.StdEncoding.DecodeString(payload.Input)
@@ -110,7 +139,7 @@ func newVaultTestServer(t *testing.T) *vaultTestServer {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			signature := ed25519.Sign(key.private, input)
+			signature := ed25519.Sign(private, input)
 			encoded := base64.StdEncoding.EncodeToString(signature)
 			if value.badSig {
 				encoded = "%%%"
@@ -142,7 +171,7 @@ func newVaultTestServer(t *testing.T) *vaultTestServer {
 				http.Error(w, "generation failed", http.StatusInternalServerError)
 				return
 			}
-			value.keys[path] = &vaultTestKey{private: private, public: public}
+			value.keys[path] = &vaultTestKey{private: map[int]ed25519.PrivateKey{1: private}, public: map[int]ed25519.PublicKey{1: public}, latest: 1}
 			value.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -154,14 +183,19 @@ func newVaultTestServer(t *testing.T) *vaultTestServer {
 				http.NotFound(w, r)
 				return
 			}
-			response := map[string]any{"data": map[string]any{
-				"type": "ed25519", "latest_version": 1, "min_encryption_version": key.floor,
-				"exportable": false, "allow_plaintext_backup": false, "deletion_allowed": false,
-				"supports_signing": true,
-				"keys": map[string]any{"1": map[string]string{
+			versions := make(map[string]any, len(key.public))
+			for version, public := range key.public {
+				versions[strconv.Itoa(version)] = map[string]string{
 					"creation_time": time.Now().UTC().Format(time.RFC3339Nano),
-					"public_key":    base64.StdEncoding.EncodeToString(key.public),
-				}},
+					"public_key":    base64.StdEncoding.EncodeToString(public),
+				}
+			}
+			response := map[string]any{"data": map[string]any{
+				"type": "ed25519", "latest_version": key.latest, "min_encryption_version": key.floor,
+				"min_decryption_version": 1,
+				"exportable":             false, "allow_plaintext_backup": false, "deletion_allowed": false,
+				"supports_signing": true,
+				"keys":             versions,
 			}}
 			value.mu.Unlock()
 			writeVaultJSON(w, http.StatusOK, response)
@@ -322,6 +356,17 @@ func TestVaultGenerateActivateSignDisableAndScopeBinding(t *testing.T) {
 	if _, err := provider.Sign(ctx, vaultScopeA, item.Reference, message, crypto.Hash(0)); !errors.Is(err, ErrKeyUnavailable) {
 		t.Fatalf("disabled Sign() error = %v", err)
 	}
+	name, err := provider.keyName(vaultScopeA, item.Reference)
+	if err != nil {
+		t.Fatal("construct scoped Transit key name:", err)
+	}
+	server.mu.Lock()
+	key := server.keys[name]
+	if key == nil || key.latest < 2 || key.floor != 2 {
+		server.mu.Unlock()
+		t.Fatalf("disabled key must have a valid Transit signing floor: %#v", key)
+	}
+	server.mu.Unlock()
 	otherTenant := vaultScopeA
 	otherTenant.TenantID = "ac1d0c44-1e99-4d15-8c4f-a303d6389890"
 	if _, err := provider.Metadata(ctx, otherTenant, item.Reference); !errors.Is(err, ErrKeyNotFound) {
@@ -337,7 +382,7 @@ func TestVaultGenerateActivateSignDisableAndScopeBinding(t *testing.T) {
 		if len(methodAndName) != 2 || strings.Contains(request, "../") {
 			t.Fatalf("Vault request path is not server-scoped: %q", request)
 		}
-		name := strings.TrimSuffix(strings.TrimSuffix(methodAndName[1], "/config"), "/sign")
+		name := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(methodAndName[1], "/config"), "/sign"), "/rotate")
 		prefix := "qg_" + base64.RawURLEncoding.EncodeToString([]byte("quantumgate")) + "_" + vaultScopeA.Environment + "_"
 		if !strings.HasPrefix(name, prefix) || strings.Contains(name, "/") {
 			t.Fatalf("Vault key name is not one scoped path segment: %q", request)

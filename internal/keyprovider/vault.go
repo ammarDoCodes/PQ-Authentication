@@ -185,9 +185,9 @@ func (p *VaultProvider) Generate(ctx context.Context, scope Scope, spec KeySpec)
 	if err := p.requestJSON(ctx, http.MethodPost, p.keyEndpoint(name), create, nil); err != nil {
 		return Metadata{}, &safeProviderOperationError{operation: "Vault Transit key creation", cause: sanitizeProviderError(err)}
 	}
-	// Transit-created keys start signable. Immediately raise the minimum
-	// signing version so an unpublished provisioning key is unusable.
-	if err := p.setSigningFloor(ctx, name, 2); err != nil {
+	// Transit requires the signing floor to reference an existing key version.
+	// Keep provisioning at version 1; the broker refuses signing until activation.
+	if err := p.setSigningFloor(ctx, name, 1); err != nil {
 		return Metadata{}, &safeProviderOperationError{operation: "Vault Transit provisioning key restriction", cause: sanitizeProviderError(err)}
 	}
 	if _, err := p.readVaultKey(ctx, name); err != nil {
@@ -289,7 +289,7 @@ func (p *VaultProvider) Sign(ctx context.Context, scope Scope, reference string,
 			return nil
 		}
 		if !p.now().Before(item.ExpiresAt) {
-			if err := p.setSigningFloor(ctx, name, 2); err != nil {
+			if err := p.restrictSigning(ctx, name, key); err != nil {
 				return err
 			}
 			item.State = StateExpired
@@ -360,14 +360,15 @@ func (p *VaultProvider) Transition(ctx context.Context, scope Scope, reference s
 		if err != nil {
 			return err
 		}
-		if _, err := p.readVaultKey(ctx, name); err != nil {
+		key, err := p.readVaultKey(ctx, name)
+		if err != nil {
 			return err
 		}
-		floor := 2
 		if target == StateActive {
-			floor = 1
-		}
-		if err := p.setSigningFloor(ctx, name, floor); err != nil {
+			if err := p.setSigningFloor(ctx, name, 1); err != nil {
+				return err
+			}
+		} else if err := p.restrictSigning(ctx, name, key); err != nil {
 			return err
 		}
 		item.State = target
@@ -391,6 +392,7 @@ type vaultTransitKey struct {
 	Type                 string                            `json:"type"`
 	LatestVersion        int                               `json:"latest_version"`
 	MinEncryptionVersion int                               `json:"min_encryption_version"`
+	MinDecryptionVersion int                               `json:"min_decryption_version"`
 	Exportable           bool                              `json:"exportable"`
 	PlaintextBackup      bool                              `json:"allow_plaintext_backup"`
 	DeletionAllowed      bool                              `json:"deletion_allowed"`
@@ -410,12 +412,19 @@ func (p *VaultProvider) readVaultKey(ctx context.Context, name string) (vaultTra
 		return vaultTransitKey{}, err
 	}
 	key := response.Data
-	if key.Type != "ed25519" || key.LatestVersion != 1 || key.Exportable || key.PlaintextBackup ||
-		key.DeletionAllowed || !key.SupportsSigning || len(key.Keys) != 1 || key.Keys["1"].PublicKey == "" {
+	if key.Type != "ed25519" || key.LatestVersion < 1 || key.MinDecryptionVersion > 1 ||
+		key.MinEncryptionVersion > key.LatestVersion || key.Exportable || key.PlaintextBackup ||
+		key.DeletionAllowed || !key.SupportsSigning || len(key.Keys) != key.LatestVersion {
 		return vaultTransitKey{}, ErrMalformedResponse
 	}
-	if _, err := parseVaultEd25519PublicKey(key.Keys["1"].PublicKey); err != nil {
-		return vaultTransitKey{}, ErrMalformedResponse
+	for version := 1; version <= key.LatestVersion; version++ {
+		entry, exists := key.Keys[strconv.Itoa(version)]
+		if !exists || entry.PublicKey == "" {
+			return vaultTransitKey{}, ErrMalformedResponse
+		}
+		if _, err := parseVaultEd25519PublicKey(entry.PublicKey); err != nil {
+			return vaultTransitKey{}, ErrMalformedResponse
+		}
 	}
 	return key, nil
 }
@@ -424,6 +433,25 @@ func (p *VaultProvider) setSigningFloor(ctx context.Context, name string, floor 
 	return p.requestJSON(ctx, http.MethodPost, p.keyEndpoint(name)+"/config", map[string]any{
 		"min_encryption_version": floor,
 	}, nil)
+}
+
+func (p *VaultProvider) restrictSigning(ctx context.Context, name string, key vaultTransitKey) error {
+	// Vault rejects a minimum version higher than the current latest version.
+	// Create version 2 first so the published version 1 can be fenced off by the
+	// Transit minimum. QuantumGate continues to pin signing to version 1.
+	if key.LatestVersion < 2 {
+		if err := p.requestJSON(ctx, http.MethodPost, p.keyEndpoint(name)+"/rotate", nil, nil); err != nil {
+			return err
+		}
+		key, err := p.readVaultKey(ctx, name)
+		if err != nil {
+			return err
+		}
+		if key.LatestVersion < 2 {
+			return ErrMalformedResponse
+		}
+	}
+	return p.setSigningFloor(ctx, name, 2)
 }
 
 func (p *VaultProvider) readMetadata(ctx context.Context, scope Scope, reference string) (Metadata, error) {
@@ -573,6 +601,9 @@ func vaultStateMatches(state State, minEncryptionVersion int) bool {
 		return false
 	}
 	if state == StateActive {
+		return minEncryptionVersion == 0 || minEncryptionVersion == 1
+	}
+	if state == StateProvisioning {
 		return minEncryptionVersion == 0 || minEncryptionVersion == 1
 	}
 	return minEncryptionVersion >= 2

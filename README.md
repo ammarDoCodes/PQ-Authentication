@@ -121,6 +121,8 @@ Check its health endpoints:
 
 Open `/auth/login` in a browser to start administrator sign-in. QuantumGate owns the OIDC authorization-code flow, including `state`, nonce, PKCE S256, exact callback, issuer and audience validation, signing-algorithm allow-list, required ACR, and recent `auth_time`. It consumes the browser-bound login transaction once and creates a random server-side session; only its hash is stored. The session cookie is Secure, HttpOnly, and SameSite=Lax, with an eight-hour absolute expiry and a 30-minute idle expiry. `/auth/session` returns the session's CSRF token; browser clients send it as `X-QG-CSRF-Token` with a same-origin `Origin` header on state-changing requests. `/auth/logout` revokes the server-side session and records an append-only authentication event.
 
+Administrator sign-in requests only the OIDC `openid` scope. QuantumGate uses the issuer, subject, ACR, and authentication time for its role and session checks; it does not need profile or email claims.
+
 Control-plane `/v1` routes require `X-QG-Tenant-ID: <tenant UUID>`. This value selects the tenant context but is not trusted as authorization. Tenant roles are looked up from PostgreSQL for every request. Membership must match, and every data query uses that tenant scope under PostgreSQL row-level security. Observation ingestion and application posture reads also accept scoped application OAuth bearer tokens; the service derives tenant and application from the token and rejects access to another application. The production entry point does not enable the internal administrator bearer-token verifier.
 
 Currently implemented routes:

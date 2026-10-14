@@ -74,6 +74,7 @@ func TestOIDCAuthorizationURLUsesStateNonceAndS256PKCE(t *testing.T) {
 	flow := &OIDCFlow{requiredACR: "urn:test:mfa", maxTokenAge: 15 * time.Minute, config: oauth2.Config{
 		ClientID: "qg-client", RedirectURL: "https://console.example/auth/callback",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://id.example/authorize"},
+		Scopes:   adminOIDCScopes(),
 	}}
 	state := strings.Repeat("s", 43)
 	nonce := strings.Repeat("n", 43)
@@ -86,7 +87,7 @@ func TestOIDCAuthorizationURLUsesStateNonceAndS256PKCE(t *testing.T) {
 	challengeHash := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(challengeHash[:])
 	if query.Get("state") != state || query.Get("nonce") != nonce || query.Get("code_challenge_method") != "S256" || query.Get("code_challenge") != challenge ||
-		query.Get("acr_values") != "urn:test:mfa" || query.Get("max_age") != "900" {
+		query.Get("acr_values") != "urn:test:mfa" || query.Get("max_age") != "900" || query.Get("scope") != "openid" {
 		t.Fatalf("authorization URL omitted required OIDC protections: %s", parsed.Redacted())
 	}
 }

@@ -61,6 +61,10 @@ type OIDCVerifier struct {
 	verifier    *oidc.IDTokenVerifier
 }
 
+func adminOIDCScopes() []string {
+	return []string{oidc.ScopeOpenID}
+}
+
 func NewOIDCVerifier(ctx context.Context, settings OIDCSettings) (*OIDCVerifier, error) {
 	if settings.RequiredACR == "" {
 		return nil, errors.New("a required OIDC ACR is required")
@@ -124,7 +128,7 @@ func NewOIDCFlow(ctx context.Context, settings OIDCSettings) (*OIDCFlow, error) 
 		config: oauth2.Config{
 			ClientID: settings.ClientID, ClientSecret: settings.ClientSecret,
 			Endpoint: endpoint, RedirectURL: settings.RedirectURL,
-			Scopes: []string{oidc.ScopeOpenID, "profile", "email"},
+			Scopes: adminOIDCScopes(),
 		},
 		verifier: provider.VerifierContext(providerCtx, &oidc.Config{
 			ClientID: settings.ClientID, SupportedSigningAlgs: append([]string(nil), settings.SigningAlgs...),

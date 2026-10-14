@@ -142,8 +142,25 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 		DB: db, Store: db,
 		Auth:         integrationTokenVerifier{principal: auth.Principal{Issuer: "https://id.example", Subject: "admin-1"}},
 		PublicOrigin: "https://console.example", RateLimitKey: []byte(strings.Repeat("k", 32)), CryptoMode: config.CryptoObserve,
+		OIDC: &auth.OIDCFlow{},
 	}
 	handler := server.Handler()
+	for attempt := 0; attempt < adminLoginLimit; attempt++ {
+		loginRequest := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
+		loginRequest.RemoteAddr = "198.51.100.51:43100"
+		loginResponse := httptest.NewRecorder()
+		handler.ServeHTTP(loginResponse, loginRequest)
+		if loginResponse.Code != http.StatusFound {
+			t.Fatalf("login initiation %d should be allowed, got %d %s", attempt+1, loginResponse.Code, loginResponse.Body.String())
+		}
+	}
+	limitedLogin := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
+	limitedLogin.RemoteAddr = "198.51.100.51:43100"
+	limitedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(limitedResponse, limitedLogin)
+	if limitedResponse.Code != http.StatusTooManyRequests || limitedResponse.Header().Get("Retry-After") == "" {
+		t.Fatalf("login initiation must be rate limited after five requests with retry guidance, got %d %s", limitedResponse.Code, limitedResponse.Body.String())
+	}
 	requestSequence := 0
 	nextKey := func() string {
 		requestSequence++

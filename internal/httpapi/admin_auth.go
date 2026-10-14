@@ -23,6 +23,7 @@ const (
 	loginTTL          = 5 * time.Minute
 	sessionTTL        = 8 * time.Hour
 	sessionIdleTTL    = 30 * time.Minute
+	adminLoginLimit   = 5
 )
 
 type loginTransaction struct {
@@ -35,7 +36,7 @@ func (s *Server) startAdminLogin(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusServiceUnavailable, "ADMIN_LOGIN_UNAVAILABLE", "Sign-in unavailable", "Administrator sign-in is not configured.", true)
 		return
 	}
-	if !s.enforceRateLimit(w, r, "admin-login:ip", clientIPDimension(r.RemoteAddr), 10) {
+	if !s.enforceRateLimit(w, r, "admin-login:ip", clientIPDimension(r.RemoteAddr), adminLoginLimit) {
 		return
 	}
 	state, err := randomURLToken(32)

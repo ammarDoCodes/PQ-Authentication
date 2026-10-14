@@ -310,7 +310,7 @@ func (p *VaultProvider) Sign(ctx context.Context, scope Scope, reference string,
 			"input":       base64.StdEncoding.EncodeToString(digest),
 			"key_version": 1,
 		}
-		if err := p.requestJSON(ctx, http.MethodPost, p.keyEndpoint(name)+"/sign", payload, &response); err != nil {
+		if err := p.requestJSON(ctx, http.MethodPost, p.transitMount+"/sign/"+name, payload, &response); err != nil {
 			return err
 		}
 		signature, err = parseVaultSignature(response.Data.Signature)

@@ -1336,10 +1336,12 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 		t.Fatalf("tenant administrator without security-engineer role must not approve a profile: %d %s", response.Code, response.Body.String())
 	}
 	reviewer := "profile-reviewer"
-	response = profileRequestAs(reviewer, tenantA, http.MethodPost, reviewActionPath+"/approve", approvalBody, profileReviewETag, nextKey())
+	approvalKey := nextKey()
+	response = profileRequestAs(reviewer, tenantA, http.MethodPost, reviewActionPath+"/approve", approvalBody, profileReviewETag, approvalKey)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"approved"`) {
 		t.Fatalf("independent security engineer should approve the profile: %d %s", response.Code, response.Body.String())
 	}
+	approvedBody := response.Body.String()
 	approvedETag := response.Header().Get("ETag")
 	setGatewayApplicationMode("sdk")
 	sdkAPIServer := httptest.NewUnstartedServer(server.Handler())
@@ -1457,16 +1459,15 @@ func TestControlPlaneTenantIsolationAndRoleAuthorization(t *testing.T) {
 	if _, err := db.ExecContext(ctx, "ALTER TABLE public.algorithm_profiles DISABLE TRIGGER algorithm_profiles_immutable_review"); err == nil {
 		t.Fatal("runtime role must not be able to disable the profile review trigger")
 	}
-	replayKey := nextKey()
-	replay := profileRequest(tenantA, http.MethodPost, reviewActionPath+"/approve", approvalBody, profileReviewETag, replayKey)
-	if replay.Code != http.StatusOK || replay.Header().Get("Idempotency-Replayed") != "true" || replay.Body.String() != response.Body.String() {
+	replay := profileRequestAs(reviewer, tenantA, http.MethodPost, reviewActionPath+"/approve", approvalBody, profileReviewETag, approvalKey)
+	if replay.Code != http.StatusOK || replay.Header().Get("Idempotency-Replayed") != "true" || replay.Body.String() != approvedBody {
 		t.Fatalf("same approval retry should replay its committed response: %d %s", replay.Code, replay.Body.String())
 	}
-	response = profileRequest(tenantA, http.MethodPost, reviewActionPath+"/approve", approvalBody, profileReviewETag, nextKey())
+	response = profileRequestAs(reviewer, tenantA, http.MethodPost, reviewActionPath+"/approve", approvalBody, profileReviewETag, nextKey())
 	if response.Code != http.StatusPreconditionFailed {
 		t.Fatalf("stale approval ETag must be rejected: %d %s", response.Code, response.Body.String())
 	}
-	response = profileRequest(tenantA, http.MethodPost, reviewActionPath+"/reject", approvalBody, approvedETag, nextKey())
+	response = profileRequestAs(reviewer, tenantA, http.MethodPost, reviewActionPath+"/reject", approvalBody, approvedETag, nextKey())
 	if response.Code != http.StatusConflict {
 		t.Fatalf("an approved profile cannot transition directly to rejected: %d %s", response.Code, response.Body.String())
 	}

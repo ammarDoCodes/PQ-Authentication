@@ -61,13 +61,55 @@ func newVaultTestServer(t *testing.T) *vaultTestServer {
 		}
 		_, _ = w.Write([]byte(`{"data":{"disable_upsert":true}}`))
 	})
+	mux.HandleFunc("/v1/transit/sign/", func(w http.ResponseWriter, r *http.Request) {
+		if value.authorize(w, r) {
+			return
+		}
+		keyName := strings.TrimPrefix(r.URL.Path, "/v1/transit/sign/")
+		value.mu.Lock()
+		value.seen = append(value.seen, r.Method+" "+r.URL.Path)
+		key := value.keys[keyName]
+		if key == nil || keyName == "" || strings.Contains(keyName, "/") {
+			value.mu.Unlock()
+			http.NotFound(w, r)
+			return
+		}
+		var payload struct {
+			Input      string `json:"input"`
+			KeyVersion int    `json:"key_version"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.KeyVersion < key.floor || payload.KeyVersion > key.latest {
+			value.mu.Unlock()
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		private, exists := key.private[payload.KeyVersion]
+		if !exists {
+			value.mu.Unlock()
+			http.Error(w, "unknown key version", http.StatusBadRequest)
+			return
+		}
+		input, err := base64.StdEncoding.DecodeString(payload.Input)
+		if err != nil {
+			value.mu.Unlock()
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		signature := ed25519.Sign(private, input)
+		encoded := base64.StdEncoding.EncodeToString(signature)
+		if value.badSig {
+			encoded = "%%%"
+		}
+		value.mu.Unlock()
+		writeVaultJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"signature": "vault:v1:" + encoded}})
+	})
 	mux.HandleFunc("/v1/transit/keys/", func(w http.ResponseWriter, r *http.Request) {
 		if value.authorize(w, r) {
 			return
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/v1/transit/keys/")
 		value.mu.Lock()
-		value.seen = append(value.seen, r.Method+" "+path)
+		value.seen = append(value.seen, r.Method+" "+r.URL.Path)
 		if strings.HasSuffix(path, "/rotate") && r.Method == http.MethodPost {
 			keyName := strings.TrimSuffix(path, "/rotate")
 			key := value.keys[keyName]
@@ -108,44 +150,6 @@ func newVaultTestServer(t *testing.T) *vaultTestServer {
 			key.floor = payload.MinEncryptionVersion
 			value.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		if strings.HasSuffix(path, "/sign") && r.Method == http.MethodPost {
-			keyName := strings.TrimSuffix(path, "/sign")
-			key := value.keys[keyName]
-			if key == nil {
-				value.mu.Unlock()
-				http.Error(w, "key disabled", http.StatusBadRequest)
-				return
-			}
-			var payload struct {
-				Input      string `json:"input"`
-				KeyVersion int    `json:"key_version"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.KeyVersion < key.floor || payload.KeyVersion > key.latest {
-				value.mu.Unlock()
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			private, exists := key.private[payload.KeyVersion]
-			if !exists {
-				value.mu.Unlock()
-				http.Error(w, "unknown key version", http.StatusBadRequest)
-				return
-			}
-			input, err := base64.StdEncoding.DecodeString(payload.Input)
-			if err != nil {
-				value.mu.Unlock()
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			signature := ed25519.Sign(private, input)
-			encoded := base64.StdEncoding.EncodeToString(signature)
-			if value.badSig {
-				encoded = "%%%"
-			}
-			value.mu.Unlock()
-			writeVaultJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"signature": "vault:v1:" + encoded}})
 			return
 		}
 		if r.Method == http.MethodPost {
@@ -382,7 +386,13 @@ func TestVaultGenerateActivateSignDisableAndScopeBinding(t *testing.T) {
 		if len(methodAndName) != 2 || strings.Contains(request, "../") {
 			t.Fatalf("Vault request path is not server-scoped: %q", request)
 		}
-		name := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(methodAndName[1], "/config"), "/sign"), "/rotate")
+		name := methodAndName[1]
+		if strings.HasPrefix(name, "/v1/transit/sign/") {
+			name = strings.TrimPrefix(name, "/v1/transit/sign/")
+		} else {
+			name = strings.TrimPrefix(name, "/v1/transit/keys/")
+			name = strings.TrimSuffix(strings.TrimSuffix(name, "/config"), "/rotate")
+		}
 		prefix := "qg_" + base64.RawURLEncoding.EncodeToString([]byte("quantumgate")) + "_" + vaultScopeA.Environment + "_"
 		if !strings.HasPrefix(name, prefix) || strings.Contains(name, "/") {
 			t.Fatalf("Vault key name is not one scoped path segment: %q", request)
